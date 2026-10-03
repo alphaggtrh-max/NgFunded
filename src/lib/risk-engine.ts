@@ -1,29 +1,17 @@
 /**
- * NGFunded Real-Time Risk Engine
- *
- * Executes drawdown checks on every tick/equity update.
- * All monetary values are in account currency (USD by default).
- * Target: <50ms per check via Redis cache.
+ * NGFunded real-time risk engine.
+ * The important distinction is balance vs equity: open positions can breach
+ * a rule before they are closed, so every market-price update must be checked.
  */
 
 import { prisma } from "@/lib/prisma";
 import { redis, CacheKeys, CACHE_TTL } from "@/lib/redis";
-import { AccountStatus, BreachType } from "@prisma/client";
+import { AccountStatus, BreachType, TradeSide, TradeStatus } from "@prisma/client";
 import type { RiskCheckInput, RiskCheckResult } from "@/types";
 
-// ─── Core Risk Check ──────────────────────────────────────────────────────────
-
-/**
- * Pure function — no I/O.
- * Checks both daily and total drawdown rules.
- */
 export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
-  // Skip if already breached
-  if (input.currentStatus === AccountStatus.BREACHED) {
-    return { breached: false };
-  }
+  if (input.currentStatus === AccountStatus.BREACHED) return { breached: false };
 
-  // ── Daily Loss Check ──────────────────────────────────────────────────────
   const dailyDrawdown = input.startOfDayEquity - input.currentEquity;
   if (dailyDrawdown >= input.maxDailyLossLimit) {
     return {
@@ -35,7 +23,6 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
     };
   }
 
-  // ── Max Total Drawdown Check ──────────────────────────────────────────────
   const totalDrawdown = input.initialBalance - input.currentEquity;
   if (totalDrawdown >= input.maxTotalDrawdownLimit) {
     return {
@@ -50,198 +37,178 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   return { breached: false };
 }
 
-// ─── Redis-Backed Equity Fetch ────────────────────────────────────────────────
-
-/**
- * Reads equity from Redis cache (fast path).
- * Falls back to DB on cache miss.
- */
-export async function getEquityFromCache(
-  accountId: string
-): Promise<number | null> {
+export async function getEquityFromCache(accountId: string): Promise<number | null> {
   const cached = await redis.get(CacheKeys.accountEquity(accountId));
-  if (cached !== null) return parseFloat(cached);
-  return null;
+  return cached === null ? null : Number(cached);
 }
 
-export async function setEquityInCache(
-  accountId: string,
-  equity: number
-): Promise<void> {
-  await redis.setex(
-    CacheKeys.accountEquity(accountId),
-    CACHE_TTL.EQUITY,
-    equity.toString()
-  );
+export async function setEquityInCache(accountId: string, equity: number): Promise<void> {
+  await redis.setex(CacheKeys.accountEquity(accountId), CACHE_TTL.EQUITY, equity.toString());
 }
 
 export async function getSodEquity(accountId: string): Promise<number | null> {
   const cached = await redis.get(CacheKeys.sodEquity(accountId));
-  if (cached !== null) return parseFloat(cached);
-  return null;
+  return cached === null ? null : Number(cached);
 }
 
-export async function setSodEquity(
-  accountId: string,
-  equity: number
-): Promise<void> {
-  await redis.setex(
-    CacheKeys.sodEquity(accountId),
-    CACHE_TTL.SOD_EQUITY,
-    equity.toString()
-  );
+export async function setSodEquity(accountId: string, equity: number): Promise<void> {
+  await redis.setex(CacheKeys.sodEquity(accountId), CACHE_TTL.SOD_EQUITY, equity.toString());
 }
 
-// ─── Full Risk Check with DB Write ───────────────────────────────────────────
+function utcToday(): Date {
+  const date = new Date();
+  date.setUTCHours(0, 0, 0, 0);
+  return date;
+}
+
+async function ensureSodEquity(accountId: string, fallbackEquity: number): Promise<number> {
+  const cached = await getSodEquity(accountId);
+  if (cached !== null && Number.isFinite(cached)) return cached;
+
+  const snapshot = await prisma.dailyEquitySnapshot.findUnique({
+    where: { accountId_date: { accountId, date: utcToday() } },
+    select: { openEquity: true },
+  });
+
+  const sod = snapshot ? Number(snapshot.openEquity) : fallbackEquity;
+  await setSodEquity(accountId, sod);
+  return sod;
+}
 
 /**
- * Orchestrates:
- * 1. Read account config (cache > DB)
- * 2. Run evaluateRisk()
- * 3. On breach: write BreachLog + update account status
- * 4. Publish breach event to Redis channel
+ * Central risk check. This is safe to call for every quote/tick.
+ * A breach transition is conditional on status=ACTIVE, preventing duplicate
+ * breach logs when multiple ticks arrive at the same time.
  */
 export async function runRiskCheck(
   accountId: string,
   currentEquity: number,
-  offendingTradeId?: string
+  offendingTradeId?: string,
 ): Promise<RiskCheckResult> {
-  // Fetch account from DB (in production, cache this too)
+  if (!Number.isFinite(currentEquity)) return { breached: false };
+
   const account = await prisma.tradingAccount.findUnique({
     where: { id: accountId },
     select: {
       initialBalance: true,
       maxDailyLossLimit: true,
       maxTotalDrawdownLimit: true,
+      currentBalance: true,
       status: true,
     },
   });
+  if (!account) return { breached: false };
 
-  if (!account) {
-    return { breached: false };
-  }
-
-  // Get start-of-day equity (Redis > DB)
-  let sodEquity = await getSodEquity(accountId);
-  if (sodEquity === null) {
-    // Load from last daily snapshot
-    const snapshot = await prisma.dailyEquitySnapshot.findFirst({
-      where: { accountId },
-      orderBy: { date: "desc" },
-      select: { openEquity: true },
-    });
-    sodEquity = snapshot
-      ? parseFloat(snapshot.openEquity.toString())
-      : parseFloat(account.initialBalance.toString());
-    await setSodEquity(accountId, sodEquity);
-  }
-
-  const input: RiskCheckInput = {
+  const sodEquity = await ensureSodEquity(accountId, Number(account.currentBalance));
+  const result = evaluateRisk({
     accountId,
     currentEquity,
     startOfDayEquity: sodEquity,
-    initialBalance: parseFloat(account.initialBalance.toString()),
-    maxDailyLossLimit: parseFloat(account.maxDailyLossLimit.toString()),
-    maxTotalDrawdownLimit: parseFloat(account.maxTotalDrawdownLimit.toString()),
+    initialBalance: Number(account.initialBalance),
+    maxDailyLossLimit: Number(account.maxDailyLossLimit),
+    maxTotalDrawdownLimit: Number(account.maxTotalDrawdownLimit),
     currentStatus: account.status,
-  };
+  });
 
-  const result = evaluateRisk(input);
-
-  if (result.breached && result.breachType) {
-    // Write breach log and update status atomically
-    await prisma.$transaction([
-      prisma.breachLog.create({
-        data: {
-          accountId,
-          tradeId: offendingTradeId ?? null,
-          breachType: result.breachType,
-          equityAtBreach: currentEquity,
-          balanceAtBreach: currentEquity, // simplified
-          drawdownValue: result.drawdownValue ?? 0,
-          drawdownLimit: result.drawdownLimit ?? 0,
-        },
-      }),
-      prisma.tradingAccount.update({
-        where: { id: accountId },
-        data: {
-          status: AccountStatus.BREACHED,
-          breachedAt: new Date(),
-          equity: currentEquity,
-        },
-      }),
-    ]);
-
-    // Update Redis status cache
-    await redis.setex(
-      CacheKeys.accountStatus(accountId),
-      CACHE_TTL.STATUS,
-      AccountStatus.BREACHED
-    );
-
-    // Publish breach event
-    await redis.publish(
-      CacheKeys.equityChannel(accountId),
-      JSON.stringify({
-        type: "ACCOUNT_BREACHED",
-        accountId,
-        payload: result,
-        timestamp: Date.now(),
-      })
-    );
-  } else {
-    // Update equity cache
+  if (!result.breached || !result.breachType) {
     await setEquityInCache(accountId, currentEquity);
-
-    // Publish equity update
-    await redis.publish(
-      CacheKeys.equityChannel(accountId),
-      JSON.stringify({
-        type: "EQUITY_UPDATE",
-        accountId,
-        payload: { equity: currentEquity },
-        timestamp: Date.now(),
-      })
-    );
+    await prisma.tradingAccount.updateMany({
+      where: { id: accountId, status: AccountStatus.ACTIVE },
+      data: { equity: currentEquity },
+    });
+    await redis.publish(CacheKeys.equityChannel(accountId), JSON.stringify({
+      type: "EQUITY_UPDATE",
+      accountId,
+      payload: { equity: currentEquity },
+      timestamp: Date.now(),
+    }));
+    return result;
   }
+
+  const transitioned = await prisma.$transaction(async (tx) => {
+    const updated = await tx.tradingAccount.updateMany({
+      where: { id: accountId, status: AccountStatus.ACTIVE },
+      data: { status: AccountStatus.BREACHED, breachedAt: new Date(), equity: currentEquity },
+    });
+    if (updated.count !== 1) return false;
+
+    await tx.breachLog.create({
+      data: {
+        accountId,
+        tradeId: offendingTradeId ?? null,
+        breachType: result.breachType!,
+        equityAtBreach: currentEquity,
+        balanceAtBreach: Number(account.currentBalance),
+        drawdownValue: result.drawdownValue ?? 0,
+        drawdownLimit: result.drawdownLimit ?? 0,
+      },
+    });
+    return true;
+  });
+
+  if (!transitioned) return { breached: false };
+
+  await redis.setex(CacheKeys.accountStatus(accountId), CACHE_TTL.STATUS, AccountStatus.BREACHED);
+  await setEquityInCache(accountId, currentEquity);
+  await redis.publish(CacheKeys.equityChannel(accountId), JSON.stringify({
+    type: "ACCOUNT_BREACHED",
+    accountId,
+    payload: result,
+    timestamp: Date.now(),
+  }));
 
   return result;
 }
 
-// ─── Daily SOD Reset ──────────────────────────────────────────────────────────
-
 /**
- * Called by cron at 00:00 UTC.
- * Creates DailyEquitySnapshot for all active accounts
- * and resets the SOD equity in Redis.
+ * Mark-to-market an account from broker/TradingView prices and immediately run
+ * the risk engine. Prices not supplied for another open symbol retain its
+ * entry price, so that position contributes zero unrealised P&L rather than a
+ * fabricated price.
  */
+export async function markAccountEquity(
+  accountId: string,
+  prices: Record<string, number>,
+  offendingTradeId?: string,
+): Promise<RiskCheckResult> {
+  const account = await prisma.tradingAccount.findUnique({
+    where: { id: accountId },
+    select: { currentBalance: true, status: true },
+  });
+  if (!account) return { breached: false };
+
+  const openTrades = await prisma.trade.findMany({
+    where: { accountId, status: TradeStatus.OPEN },
+    select: { id: true, symbol: true, side: true, quantity: true, entryPrice: true },
+  });
+
+  let equity = Number(account.currentBalance);
+  for (const trade of openTrades) {
+    const entry = Number(trade.entryPrice);
+    const price = Number(prices[trade.symbol.toUpperCase()] ?? entry);
+    const qty = Number(trade.quantity);
+    equity += trade.side === TradeSide.BUY
+      ? (price - entry) * qty
+      : (entry - price) * qty;
+  }
+
+  return runRiskCheck(accountId, equity, offendingTradeId);
+}
+
 export async function resetDailySodEquity(): Promise<void> {
   const activeAccounts = await prisma.tradingAccount.findMany({
     where: { status: AccountStatus.ACTIVE },
     select: { id: true, equity: true },
   });
+  const today = utcToday();
 
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
+  await prisma.$transaction(activeAccounts.map((acc) =>
+    prisma.dailyEquitySnapshot.upsert({
+      where: { accountId_date: { accountId: acc.id, date: today } },
+      create: { accountId: acc.id, date: today, openEquity: acc.equity },
+      update: {},
+    })
+  ));
 
-  await prisma.$transaction(
-    activeAccounts.map((acc) =>
-      prisma.dailyEquitySnapshot.upsert({
-        where: { accountId_date: { accountId: acc.id, date: today } },
-        create: {
-          accountId: acc.id,
-          date: today,
-          openEquity: acc.equity,
-        },
-        update: {},
-      })
-    )
-  );
-
-  // Update Redis SOD values
-  await Promise.all(
-    activeAccounts.map((acc) =>
-      setSodEquity(acc.id, parseFloat(acc.equity.toString()))
-    )
-  );
+  await Promise.all(activeAccounts.map((acc) => setSodEquity(acc.id, Number(acc.equity))));
 }
