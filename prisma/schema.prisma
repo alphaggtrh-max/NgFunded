@@ -1,0 +1,325 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// NGFunded — Prisma Schema
+// PostgreSQL · Prisma Client v5
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  TRADER
+  ADMIN
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AccountType {
+  EVALUATION_PHASE_1
+  EVALUATION_PHASE_2
+  FUNDED
+}
+
+enum AccountStatus {
+  ACTIVE
+  BREACHED
+  PASSED
+  SUSPENDED
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum TradeStatus {
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum BreachType {
+  DAILY_LOSS_LIMIT
+  MAX_TRAILING_DRAWDOWN
+  MAX_STATIC_DRAWDOWN
+  MANUAL_OVERRIDE
+}
+
+// ─── User ────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  passwordHash  String?
+
+  role      Role      @default(TRADER)
+  kycStatus KycStatus @default(PENDING)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  accounts        Account[]         // NextAuth
+  sessions        Session[]         // NextAuth
+  tradingAccounts TradingAccount[]
+  payouts         Payout[]
+
+  @@map("users")
+}
+
+// ─── NextAuth Models ─────────────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Trading Account ─────────────────────────────────────────────────────────
+
+model TradingAccount {
+  id      String @id @default(cuid())
+  /// Human-readable account ID (e.g. "NGF-00001")
+  accountId String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accountType AccountType
+  status      AccountStatus @default(ACTIVE)
+
+  // Balance & Equity
+  initialBalance  Decimal @db.Decimal(18, 8)
+  currentBalance  Decimal @db.Decimal(18, 8)
+  /// Unrealised + realised — updated on every tick
+  equity          Decimal @db.Decimal(18, 8)
+
+  // Risk Rules
+  /// Absolute dollar amount (e.g. $500 on a $10,000 account = 5%)
+  maxDailyLossLimit      Decimal @db.Decimal(18, 8)
+  /// Absolute dollar amount (e.g. $1,000 on a $10,000 account = 10%)
+  maxTotalDrawdownLimit  Decimal @db.Decimal(18, 8)
+
+  // Challenge Target
+  profitTarget Decimal @db.Decimal(18, 8)
+
+  // Leverage
+  maxLeverage Int @default(100)
+
+  // Timestamps
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  breachedAt   DateTime?
+  passedAt     DateTime?
+
+  // Relations
+  trades              Trade[]
+  dailyEquitySnapshots DailyEquitySnapshot[]
+  breachLogs          BreachLog[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("trading_accounts")
+}
+
+// ─── Trade ───────────────────────────────────────────────────────────────────
+
+model Trade {
+  id               String      @id @default(cuid())
+  /// External broker/exchange trade ID
+  externalId       String?     @unique
+
+  accountId String
+  account   TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  symbol    String
+  side      TradeSide
+  status    TradeStatus @default(OPEN)
+
+  // Execution
+  quantity   Decimal @db.Decimal(18, 8)
+  entryPrice Decimal @db.Decimal(18, 8)
+  exitPrice  Decimal? @db.Decimal(18, 8)
+
+  // Risk management
+  stopLoss   Decimal? @db.Decimal(18, 8)
+  takeProfit Decimal? @db.Decimal(18, 8)
+
+  // P&L (set on close)
+  pnl        Decimal? @db.Decimal(18, 8)
+  /// P&L as % of account balance at trade open
+  pnlPercent Decimal? @db.Decimal(10, 6)
+
+  // Hold time helpers
+  openedAt  DateTime  @default(now())
+  closedAt  DateTime?
+
+  // Analytics metadata
+  /// e.g. ["Opening Liquidity Sweep", "Resistance Fade"]
+  tags     String[]
+  /// Trader notes / journal entry
+  notes    String?  @db.Text
+  /// Screenshot URL (uploaded to object storage)
+  screenshotUrl String?
+
+  // Calculated R:R at entry
+  riskRewardRatio Decimal? @db.Decimal(10, 4)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  breachLogs BreachLog[]
+
+  @@index([accountId])
+  @@index([symbol])
+  @@index([status])
+  @@index([openedAt])
+  @@map("trades")
+}
+
+// ─── Daily Equity Snapshot ───────────────────────────────────────────────────
+
+/// End-of-day (00:00 UTC) snapshot used to calculate daily drawdown baseline.
+model DailyEquitySnapshot {
+  id        String   @id @default(cuid())
+
+  accountId String
+  account   TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// The date this snapshot represents (truncated to day at UTC midnight)
+  date      DateTime
+
+  /// Equity at start-of-day (00:00 UTC) — the drawdown resets against this value
+  openEquity  Decimal @db.Decimal(18, 8)
+  /// Equity at end-of-day (23:59 UTC) — recorded nightly by cron
+  closeEquity Decimal? @db.Decimal(18, 8)
+
+  /// Highest equity reached during the day (trailing high-water mark)
+  highEquity  Decimal? @db.Decimal(18, 8)
+  /// Lowest equity reached during the day
+  lowEquity   Decimal? @db.Decimal(18, 8)
+
+  createdAt DateTime @default(now())
+
+  @@unique([accountId, date])
+  @@index([accountId])
+  @@map("daily_equity_snapshots")
+}
+
+// ─── Breach Log ──────────────────────────────────────────────────────────────
+
+/// Immutable audit trail entry written whenever a risk rule fires.
+model BreachLog {
+  id        String @id @default(cuid())
+
+  accountId String
+  account   TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// The offending trade that triggered the breach (if applicable)
+  tradeId   String?
+  trade     Trade?  @relation(fields: [tradeId], references: [id])
+
+  breachType BreachType
+
+  /// Account equity at the moment of breach
+  equityAtBreach   Decimal @db.Decimal(18, 8)
+  /// Balance at the moment of breach
+  balanceAtBreach  Decimal @db.Decimal(18, 8)
+  /// The computed drawdown value that triggered the rule
+  drawdownValue    Decimal @db.Decimal(18, 8)
+  /// The limit that was violated
+  drawdownLimit    Decimal @db.Decimal(18, 8)
+
+  /// Optional: admin who manually triggered this entry
+  resolvedByAdminId String?
+  notes             String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
+  @@index([createdAt])
+  @@map("breach_logs")
+}
+
+// ─── Payout ──────────────────────────────────────────────────────────────────
+
+enum PayoutStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+model Payout {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount      Decimal      @db.Decimal(18, 8)
+  currency    String       @default("USD")
+  status      PayoutStatus @default(PENDING)
+  requestedAt DateTime     @default(now())
+  processedAt DateTime?
+
+  /// Admin who approved / rejected
+  processedByAdminId String?
+  notes              String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("payouts")
+}

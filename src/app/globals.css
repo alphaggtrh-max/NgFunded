@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Variables ─────────────────────────────────────────────────────── */
+:root {
+  --radius: 0.5rem;
+  --font-inter: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* ─── Base Reset & Body ──────────────────────────────────────────────────── */
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-background text-text-primary antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  ::selection {
+    @apply bg-crimson/30 text-text-primary;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-surface;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-bright rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-text-muted;
+  }
+}
+
+/* ─── Utility Classes ────────────────────────────────────────────────────── */
+@layer utilities {
+  /* Glassmorphism panel */
+  .glass-panel {
+    @apply bg-surface/80 backdrop-blur-md border border-border rounded-xl;
+  }
+
+  /* Terminal-style text */
+  .font-terminal {
+    font-family: var(--font-mono);
+    letter-spacing: 0.02em;
+  }
+
+  /* Glow text effects */
+  .text-glow-crimson {
+    text-shadow: 0 0 12px rgba(230, 57, 70, 0.6);
+  }
+
+  .text-glow-cyan {
+    text-shadow: 0 0 12px rgba(0, 245, 212, 0.6);
+  }
+
+  .text-glow-amber {
+    text-shadow: 0 0 12px rgba(255, 183, 3, 0.6);
+  }
+
+  /* Animated border gradient */
+  .border-gradient-crimson {
+    border-image: linear-gradient(135deg, #E63946, #7A1D23) 1;
+  }
+
+  /* P&L positive / negative */
+  .pnl-positive {
+    @apply text-cyan font-mono text-glow-cyan;
+  }
+
+  .pnl-negative {
+    @apply text-crimson font-mono text-glow-crimson;
+  }
+
+  /* Status badges */
+  .badge-active {
+    @apply bg-cyan/10 text-cyan border border-cyan/30 px-2 py-0.5 rounded text-xs font-mono uppercase tracking-wide;
+  }
+
+  .badge-breached {
+    @apply bg-crimson/10 text-crimson border border-crimson/30 px-2 py-0.5 rounded text-xs font-mono uppercase tracking-wide;
+  }
+
+  .badge-passed {
+    @apply bg-success/10 text-success border border-success/30 px-2 py-0.5 rounded text-xs font-mono uppercase tracking-wide;
+  }
+
+  /* Side badges */
+  .badge-long {
+    @apply bg-cyan/10 text-cyan border border-cyan/20 px-2 py-0.5 rounded text-xs font-mono;
+  }
+
+  .badge-short {
+    @apply bg-crimson/10 text-crimson border border-crimson/20 px-2 py-0.5 rounded text-xs font-mono;
+  }
+
+  /* Metric card */
+  .metric-card {
+    @apply glass-panel p-6 space-y-2 hover:border-border-bright transition-colors duration-200;
+  }
+}
+
+/* ─── Component Classes ──────────────────────────────────────────────────── */
+@layer components {
+  /* Focus ring override for brand */
+  .focus-ring {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-crimson focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+
+  /* Chart container */
+  .chart-container {
+    @apply relative w-full rounded-xl overflow-hidden bg-surface border border-border;
+  }
+}
