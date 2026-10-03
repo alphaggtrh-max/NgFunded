@@ -8,19 +8,19 @@ import { z } from "zod";
 
 const CreateTradeSchema = z.object({
   accountId: z.string().cuid(),
-  symbol: z.string().min(1).max(20),
+  symbol: z.string().trim().min(1).max(20).transform((value) => value.toUpperCase()),
   side: z.nativeEnum(TradeSide),
-  quantity: z.number().positive(),
-  entryPrice: z.number().positive(),
-  stopLoss: z.number().positive().optional(),
-  takeProfit: z.number().positive().optional(),
-  tags: z.array(z.string().max(50)).default([]),
+  quantity: z.number().finite().positive(),
+  entryPrice: z.number().finite().positive(),
+  stopLoss: z.number().finite().positive().optional(),
+  takeProfit: z.number().finite().positive().optional(),
+  tags: z.array(z.string().trim().min(1).max(50)).max(20).default([]),
   notes: z.string().max(2000).optional(),
 });
 
 const CloseTradeSchema = z.object({
   tradeId: z.string().cuid(),
-  exitPrice: z.number().positive(),
+  exitPrice: z.number().finite().positive(),
   closedAt: z.string().datetime().optional(),
 });
 
@@ -42,9 +42,8 @@ export async function GET(req: NextRequest) {
 
   const where = {
     ...(accountId ? { accountId } : {}),
-    ...(symbol ? { symbol } : {}),
+    ...(symbol ? { symbol: symbol.toUpperCase() } : {}),
     ...(status ? { status } : {}),
-    // Scope to user unless admin
     ...(session.user.role !== "ADMIN"
       ? { account: { userId: session.user.id } }
       : {}),
@@ -81,13 +80,20 @@ export async function POST(req: NextRequest) {
   const { accountId, symbol, side, quantity, entryPrice, stopLoss, takeProfit, tags, notes } =
     validation.data;
 
-  // Verify account ownership
+  // Verify ownership and load the complete risk configuration before creating the trade.
   const account = await prisma.tradingAccount.findFirst({
     where: {
       id: accountId,
       ...(session.user.role !== "ADMIN" ? { userId: session.user.id } : {}),
     },
-    select: { id: true, equity: true, status: true },
+    select: {
+      id: true,
+      equity: true,
+      currentBalance: true,
+      initialBalance: true,
+      maxLeverage: true,
+      status: true,
+    },
   });
 
   if (!account) {
@@ -101,12 +107,58 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Calculate R:R if SL and TP provided
+  // Prevent logically invalid protective levels. This catches accidental
+  // long/short inversions before they become part of the trader's audit trail.
+  if (side === TradeSide.BUY) {
+    if (stopLoss !== undefined && stopLoss >= entryPrice) {
+      return NextResponse.json(
+        errorResponse("For BUY trades, stop loss must be below entry price", 400, "INVALID_STOP_LOSS"),
+        { status: 400 }
+      );
+    }
+    if (takeProfit !== undefined && takeProfit <= entryPrice) {
+      return NextResponse.json(
+        errorResponse("For BUY trades, take profit must be above entry price", 400, "INVALID_TAKE_PROFIT"),
+        { status: 400 }
+      );
+    }
+  } else {
+    if (stopLoss !== undefined && stopLoss <= entryPrice) {
+      return NextResponse.json(
+        errorResponse("For SELL trades, stop loss must be above entry price", 400, "INVALID_STOP_LOSS"),
+        { status: 400 }
+      );
+    }
+    if (takeProfit !== undefined && takeProfit >= entryPrice) {
+      return NextResponse.json(
+        errorResponse("For SELL trades, take profit must be below entry price", 400, "INVALID_TAKE_PROFIT"),
+        { status: 400 }
+      );
+    }
+  }
+
+  // Calculate R:R if SL and TP are both provided.
   let riskRewardRatio: number | undefined;
-  if (stopLoss && takeProfit) {
+  if (stopLoss !== undefined && takeProfit !== undefined) {
     const risk = Math.abs(entryPrice - stopLoss);
     const reward = Math.abs(takeProfit - entryPrice);
     riskRewardRatio = risk > 0 ? reward / risk : undefined;
+  }
+
+  // Basic notional/leverage guard. This is intentionally conservative: the
+  // engine does not model broker-specific margin rules yet.
+  const notional = entryPrice * quantity;
+  const equity = parseFloat(account.equity.toString());
+  const maxNotional = Math.max(0, equity * account.maxLeverage);
+  if (notional > maxNotional) {
+    return NextResponse.json(
+      errorResponse(
+        `Trade notional exceeds the account leverage limit (${account.maxLeverage}x)`,
+        400,
+        "LEVERAGE_LIMIT_EXCEEDED"
+      ),
+      { status: 400 }
+    );
   }
 
   const trade = await prisma.trade.create({
@@ -151,14 +203,30 @@ export async function PATCH(req: NextRequest) {
         ? { account: { userId: session.user.id } }
         : {}),
     },
-    include: { account: { select: { id: true, initialBalance: true, currentBalance: true, equity: true } } },
+    include: {
+      account: {
+        select: {
+          id: true,
+          initialBalance: true,
+          currentBalance: true,
+          equity: true,
+          status: true,
+        },
+      },
+    },
   });
 
   if (!trade) {
     return NextResponse.json(errorResponse("Open trade not found", 404, "NOT_FOUND"), { status: 404 });
   }
 
-  // Calculate P&L
+  if (trade.account.status !== "ACTIVE") {
+    return NextResponse.json(
+      errorResponse(`Account is ${trade.account.status}`, 403, "ACCOUNT_NOT_ACTIVE"),
+      { status: 403 }
+    );
+  }
+
   const qty = parseFloat(trade.quantity.toString());
   const entry = parseFloat(trade.entryPrice.toString());
   const pnl =
@@ -167,11 +235,19 @@ export async function PATCH(req: NextRequest) {
       : (entry - exitPrice) * qty;
 
   const balance = parseFloat(trade.account.currentBalance.toString());
-  const pnlPercent = (pnl / balance) * 100;
-
+  const pnlPercent = balance !== 0 ? (pnl / balance) * 100 : 0;
   const newEquity = parseFloat(trade.account.equity.toString()) + pnl;
 
   const closedTrade = await prisma.$transaction(async (tx) => {
+    // Re-read the trade inside the transaction so two close requests cannot
+    // both mutate the same OPEN trade.
+    const current = await tx.trade.findFirst({
+      where: { id: tradeId, status: TradeStatus.OPEN },
+      select: { id: true },
+    });
+
+    if (!current) return null;
+
     const updated = await tx.trade.update({
       where: { id: tradeId },
       data: {
@@ -194,8 +270,18 @@ export async function PATCH(req: NextRequest) {
     return updated;
   });
 
-  // Run risk check after closing
-  await runRiskCheck(trade.accountId, newEquity, trade.id);
+  if (!closedTrade) {
+    return NextResponse.json(
+      errorResponse("Trade was already closed", 409, "TRADE_ALREADY_CLOSED"),
+      { status: 409 }
+    );
+  }
 
-  return NextResponse.json(successResponse(closedTrade));
+  // Risk evaluation happens only after the transaction has committed, so the
+  // risk engine sees the same equity that the account now stores.
+  const riskResult = await runRiskCheck(trade.accountId, newEquity, trade.id);
+
+  return NextResponse.json(
+    successResponse({ trade: closedTrade, risk: riskResult })
+  );
 }
