@@ -1,53 +1,36 @@
 /**
- * NGFunded Mock Exchange WebSocket Server
+ * NGFunded market-data WebSocket fanout.
  *
- * Simulates:
- * - Live price ticks for configured symbols
- * - Position P&L updates streamed to connected clients
- * - Risk check triggers on every equity update
+ * MT5 is the price source; this process never places live orders.
+ * The Python MT5 bridge publishes quotes to Redis and this service fans them
+ * out to paper-trading clients while marking open paper positions to market.
  *
  * Run: npx ts-node --esm src/server/mock-exchange.ts
- * Or:  node --experimental-specifier-resolution=node dist/server/mock-exchange.js
  */
 
 import { WebSocketServer, WebSocket } from "ws";
 import { IncomingMessage } from "http";
-import { runRiskCheck } from "@/lib/risk-engine";
-import { redis, CacheKeys } from "@/lib/redis";
+import { redis, CacheKeys, CACHE_TTL } from "@/lib/redis";
+import { markAccountEquityFromQuotes, getEquityFromCache } from "@/lib/risk-engine";
+import type { MarketQuote } from "@/lib/risk-engine";
 import type { WsMessage, TickPayload, EquityUpdatePayload } from "@/types";
 
 const PORT = parseInt(process.env.RISK_ENGINE_PORT ?? "3001", 10);
+const subscriber = redis.duplicate();
+const latestQuotes: Record<string, MarketQuote> = {};
 
-// ─── Symbols ──────────────────────────────────────────────────────────────────
-
-interface SymbolState {
-  bid: number;
-  ask: number;
-  spread: number;
-  volatility: number; // daily vol approximation
-}
-
-const symbols: Record<string, SymbolState> = {
-  "$PURR": { bid: 1.2450, ask: 1.2455, spread: 0.0005, volatility: 0.02 },
-  "XAUUSD": { bid: 2350.50, ask: 2350.80, spread: 0.30, volatility: 0.008 },
-  "EURUSD": { bid: 1.0952, ask: 1.0954, spread: 0.0002, volatility: 0.005 },
-  "BTCUSDT": { bid: 68420.0, ask: 68425.0, spread: 5.0, volatility: 0.03 },
-};
-
-// ─── Client Registry ──────────────────────────────────────────────────────────
-
-type ClientMap = Map<string, Set<WebSocket>>; // accountId -> clients
+type ClientMap = Map<string, Set<WebSocket>>;
 const clientsByAccount: ClientMap = new Map();
 
 function registerClient(accountId: string, ws: WebSocket): void {
-  if (!clientsByAccount.has(accountId)) {
-    clientsByAccount.set(accountId, new Set());
-  }
+  if (!clientsByAccount.has(accountId)) clientsByAccount.set(accountId, new Set());
   clientsByAccount.get(accountId)!.add(ws);
 }
 
 function deregisterClient(accountId: string, ws: WebSocket): void {
-  clientsByAccount.get(accountId)?.delete(ws);
+  const clients = clientsByAccount.get(accountId);
+  clients?.delete(ws);
+  if (clients?.size === 0) clientsByAccount.delete(accountId);
 }
 
 function broadcast(accountId: string, msg: WsMessage): void {
@@ -55,58 +38,36 @@ function broadcast(accountId: string, msg: WsMessage): void {
   if (!clients) return;
   const data = JSON.stringify(msg);
   for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(data);
-    }
+    if (client.readyState === WebSocket.OPEN) client.send(data);
   }
 }
 
-// ─── Tick Generator ───────────────────────────────────────────────────────────
+async function publishAccountMark(accountId: string): Promise<void> {
+  const risk = await markAccountEquityFromQuotes(accountId, latestQuotes);
+  const equity = await getEquityFromCache(accountId);
+  if (equity === null) return;
 
-function nextPrice(state: SymbolState): SymbolState {
-  const change = (Math.random() - 0.5) * state.bid * state.volatility * 0.01;
-  const newBid = parseFloat((state.bid + change).toFixed(5));
-  const newAsk = parseFloat((newBid + state.spread).toFixed(5));
-  return { ...state, bid: newBid, ask: newAsk };
-}
-
-// ─── Equity Calculator (simplified) ──────────────────────────────────────────
-
-async function updateEquityForAccount(
-  accountId: string,
-  currentEquity: number
-): Promise<void> {
-  // Tiny random equity drift for simulation
-  const drift = (Math.random() - 0.49) * 5;
-  const newEquity = parseFloat((currentEquity + drift).toFixed(2));
-
-  // Run risk check (sub-50ms target)
-  const result = await runRiskCheck(accountId, newEquity);
-
-  // Build equity update payload
-  const cached = await redis.get(CacheKeys.sodEquity(accountId));
-  const sodEquity = cached ? parseFloat(cached) : newEquity;
+  const openPnlRaw = await redis.get(CacheKeys.openPnl(accountId));
+  const sodRaw = await redis.get(CacheKeys.sodEquity(accountId));
+  const openPnl = Number(openPnlRaw ?? 0);
+  const sod = Number(sodRaw ?? equity);
 
   const payload: EquityUpdatePayload = {
-    equity: newEquity,
-    balance: newEquity, // simplified
-    openPnl: drift,
-    dailyPnl: newEquity - sodEquity,
-    drawdownUsedPct: 0, // placeholder
-    dailyDrawdownUsedPct: 0, // placeholder
+    equity,
+    balance: equity - openPnl,
+    openPnl,
+    dailyPnl: equity - sod,
+    drawdownUsedPct: 0,
+    dailyDrawdownUsedPct: 0,
   };
 
-  const msgType = result.breached ? "ACCOUNT_BREACHED" : "EQUITY_UPDATE";
-
   broadcast(accountId, {
-    type: msgType,
+    type: risk.breached ? "ACCOUNT_BREACHED" : "EQUITY_UPDATE",
     accountId,
-    payload: result.breached ? result : payload,
+    payload: risk.breached ? risk : payload,
     timestamp: Date.now(),
   });
 }
-
-// ─── WebSocket Server ─────────────────────────────────────────────────────────
 
 const wss = new WebSocketServer({ port: PORT });
 
@@ -119,65 +80,72 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     return;
   }
 
-  console.log(`[WS] Client connected → accountId=${accountId}`);
   registerClient(accountId, ws);
+  console.log(`[WS] Paper client connected → ${accountId}`);
+
+  for (const quote of Object.values(latestQuotes)) {
+    const tick: TickPayload = {
+      symbol: quote.symbol,
+      bid: quote.bid,
+      ask: quote.ask,
+      last: quote.last,
+      timestamp: quote.timestamp,
+    };
+    ws.send(JSON.stringify({ type: "TICK", payload: tick, timestamp: Date.now() }));
+  }
+
+  ws.send(JSON.stringify({ type: "PING", payload: {}, timestamp: Date.now() }));
 
   ws.on("message", (raw: Buffer) => {
     try {
       const msg = JSON.parse(raw.toString()) as WsMessage;
-      if (msg.type === "PONG") return; // heartbeat ack
+      if (msg.type === "PONG") return;
     } catch {
-      // ignore malformed messages
+      // Ignore malformed client messages.
     }
   });
 
   ws.on("close", () => {
     deregisterClient(accountId, ws);
-    console.log(`[WS] Client disconnected → accountId=${accountId}`);
+    console.log(`[WS] Paper client disconnected → ${accountId}`);
   });
-
-  // Send initial ping
-  ws.send(JSON.stringify({ type: "PING", payload: {}, timestamp: Date.now() }));
 });
 
-console.log(`🚀 NGFunded Mock Exchange WS running on ws://localhost:${PORT}`);
+async function start() {
+  await subscriber.subscribe(CacheKeys.marketTickChannel());
+  subscriber.on("message", async (channel, raw) => {
+    if (channel !== CacheKeys.marketTickChannel()) return;
 
-// ─── Tick Loop ────────────────────────────────────────────────────────────────
+    try {
+      const quote = JSON.parse(raw) as MarketQuote;
+      if (!quote.symbol || !Number.isFinite(quote.bid) || !Number.isFinite(quote.ask)) return;
 
-// Broadcast ticks every 500ms
-setInterval(() => {
-  for (const [sym, state] of Object.entries(symbols)) {
-    symbols[sym] = nextPrice(state);
-    const tick: TickPayload = {
-      symbol: sym,
-      bid: symbols[sym].bid,
-      ask: symbols[sym].ask,
-      last: symbols[sym].bid,
-      timestamp: Date.now(),
-    };
+      const symbol = quote.symbol.toUpperCase();
+      latestQuotes[symbol] = { ...quote, symbol };
 
-    // Broadcast tick to all connected clients
-    for (const [accountId] of clientsByAccount) {
-      broadcast(accountId, {
-        type: "TICK",
-        payload: tick,
-        timestamp: Date.now(),
-      });
+      await redis.setex(CacheKeys.marketTick(symbol), CACHE_TTL.MARKET_TICK, JSON.stringify(latestQuotes[symbol]));
+
+      const tick: TickPayload = {
+        symbol,
+        bid: quote.bid,
+        ask: quote.ask,
+        last: quote.last,
+        timestamp: quote.timestamp,
+      };
+
+      for (const accountId of clientsByAccount.keys()) {
+        broadcast(accountId, { type: "TICK", payload: tick, timestamp: Date.now() });
+        await publishAccountMark(accountId);
+      }
+    } catch (error) {
+      console.error("[MT5] Invalid Redis market-data message", error);
     }
-  }
-}, 500);
+  });
 
-// Update equity every second (simulating open position mark-to-market)
-const equityTracking = new Map<string, number>(); // accountId -> equity
+  console.log(`🚀 NGFunded MT5 market-data WS running on ws://localhost:${PORT}`);
+}
 
-setInterval(async () => {
-  for (const [accountId] of clientsByAccount) {
-    const current = equityTracking.get(accountId) ?? 10000;
-    await updateEquityForAccount(accountId, current);
-    // Store updated estimate
-    equityTracking.set(
-      accountId,
-      current + (Math.random() - 0.49) * 5
-    );
-  }
-}, 1000);
+void start().catch((error) => {
+  console.error("[MT5] Market-data fanout failed to start", error);
+  process.exit(1);
+});
