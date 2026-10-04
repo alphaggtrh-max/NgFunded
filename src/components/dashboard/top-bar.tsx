@@ -1,105 +1,48 @@
 "use client";
 
-import { useSession } from "next-auth/react";
-import { useAccountStore } from "@/store/account-store";
-import { formatCurrency, formatPnl, formatPercent } from "@/lib/utils";
-import { cn } from "@/lib/utils";
 import { Activity, ChevronDown } from "lucide-react";
-import { AccountStatus } from "@prisma/client";
+import { useState } from "react";
 
 export function TopBar() {
-  const { data: session } = useSession();
-  const { selectedAccount, pnlData } = useAccountStore();
-
-  const equity = pnlData?.equity ?? selectedAccount?.equity ?? 0;
-  const initialBalance =
-    typeof selectedAccount?.initialBalance === "number"
-      ? selectedAccount.initialBalance
-      : 0;
-
-  const openPnl = pnlData?.openPnl ?? 0;
-  const { formatted: pnlFormatted, colorClass } = formatPnl(openPnl);
-
-  const profitTarget =
-    typeof selectedAccount?.profitTarget === "number"
-      ? selectedAccount.profitTarget
-      : 1;
-  const currentGain = equity - initialBalance;
-  const progressPct = Math.min(
-    Math.max((currentGain / profitTarget) * 100, 0),
-    100
-  );
-
-  const status = selectedAccount?.status ?? AccountStatus.ACTIVE;
+  const [account, setAccount] = useState("NGF-100042");
 
   return (
-    <header className="flex items-center gap-4 px-6 py-3 border-b border-border bg-surface/80 backdrop-blur-sm sticky top-0 z-20">
-      {/* Brand */}
-      <div className="flex items-center gap-2 mr-4">
-        <span className="text-lg font-bold text-crimson text-glow-crimson">NG</span>
-        <span className="text-lg font-bold text-text-primary">Funded</span>
+    <header className="sticky top-0 z-20 flex items-center gap-4 border-b border-border bg-surface/90 px-5 py-3 backdrop-blur-xl">
+      <div className="flex items-center gap-2 mr-2">
+        <span className="text-lg font-black tracking-tight text-crimson text-glow-crimson">NG</span>
+        <span className="text-lg font-semibold tracking-tight text-text-primary">Funded</span>
       </div>
 
-      {/* Account Selector */}
-      <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border hover:border-border-bright transition-colors text-sm text-text-secondary hover:text-text-primary">
-        <span className="font-mono">
-          {selectedAccount?.accountId ?? "Select Account"}
-        </span>
-        <ChevronDown className="w-3 h-3" />
-      </button>
+      <div className="relative">
+        <select
+          value={account}
+          onChange={(event) => setAccount(event.target.value)}
+          aria-label="Trading account"
+          className="appearance-none rounded-lg border border-border bg-background px-3 py-1.5 pr-8 text-xs font-mono text-text-secondary outline-none transition hover:border-border-bright focus:border-crimson"
+        >
+          <option>NGF-100042</option>
+          <option>NGF-100031</option>
+          <option>NGF-100018</option>
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 text-text-muted" />
+      </div>
 
-      {/* Account Type Badge */}
-      {selectedAccount && (
-        <span className="text-xs font-mono text-text-muted border border-border px-2 py-0.5 rounded">
-          {selectedAccount.accountType.replace(/_/g, " ")}
-        </span>
-      )}
-
+      <span className="hidden rounded border border-border px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-text-muted sm:inline-flex">Phase 1 Evaluation</span>
       <div className="flex-1" />
 
-      {/* Live P&L */}
-      <div className="flex items-center gap-2">
-        <Activity className="w-4 h-4 text-cyan animate-pulse" />
-        <span className={cn("text-sm font-mono font-semibold", colorClass)}>
-          {pnlFormatted}
-        </span>
+      <div className="hidden items-center gap-2 rounded-lg border border-cyan/10 bg-cyan/5 px-3 py-1.5 sm:flex">
+        <Activity className="h-3.5 w-3.5 animate-pulse text-cyan" />
+        <span className="text-xs font-mono text-cyan">$7,380.00</span>
+        <span className="text-[10px] text-text-muted">P&L</span>
       </div>
 
-      {/* Challenge Progress */}
-      {selectedAccount && (
-        <div className="flex items-center gap-3 w-48">
-          <div className="flex-1">
-            <div className="flex justify-between text-xs mb-1">
-              <span className="text-text-muted">Target</span>
-              <span className="text-amber font-mono">
-                {formatPercent(progressPct, 1)}
-              </span>
-            </div>
-            <div className="h-1.5 bg-surface-elevated rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-amber to-amber/60 rounded-full transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Status Badge */}
-      <span
-        className={cn({
-          "badge-active": status === AccountStatus.ACTIVE,
-          "badge-breached": status === AccountStatus.BREACHED,
-          "badge-passed": status === AccountStatus.PASSED,
-        })}
-      >
-        {status}
-      </span>
-
-      {/* User */}
-      <div className="w-8 h-8 rounded-full bg-crimson/20 border border-crimson/30 flex items-center justify-center text-xs font-bold text-crimson">
-        {session?.user?.name?.charAt(0) ?? "U"}
+      <div className="hidden w-32 md:block">
+        <div className="mb-1 flex justify-between text-[9px] font-mono uppercase tracking-wider"><span className="text-text-muted">Target</span><span className="text-amber">92.3%</span></div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-surface-elevated"><div className="h-full w-[92.3%] rounded-full bg-amber" /></div>
       </div>
+
+      <span className="badge-active">ACTIVE</span>
+      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-crimson/30 bg-crimson/10 text-xs font-bold text-crimson">D</div>
     </header>
   );
 }
