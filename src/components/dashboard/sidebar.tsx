@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, TrendingUp, CandlestickChart, BookOpen, BarChart3, Shield, Settings, LogOut } from "lucide-react";
+import { LayoutDashboard, TrendingUp, CandlestickChart, BookOpen, BarChart3, Shield, Settings, LogOut, WalletCards } from "lucide-react";
 import { signOut } from "next-auth/react";
 
 const navItems = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Overview" },
-  { href: "/dashboard/trading", icon: CandlestickChart, label: "Paper Trading" },
+  { href: "/dashboard/challenges", icon: WalletCards, label: "Funded Accounts" },
+  { href: "/dashboard/trading", icon: CandlestickChart, label: "Trading" },
   { href: "/dashboard/trades", icon: TrendingUp, label: "Trades" },
   { href: "/dashboard/journal", icon: BookOpen, label: "Journal" },
   { href: "/dashboard/analytics", icon: BarChart3, label: "Analytics" },

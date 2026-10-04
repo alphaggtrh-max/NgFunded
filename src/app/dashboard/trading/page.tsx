@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { createChart, ColorType, type IChartApi, type ISeriesApi, type CandlestickData } from "lightweight-charts";
 
 const START = 1.1742;
@@ -63,9 +64,7 @@ export default function TradingPage() {
       timeScale: { borderColor: "#2a2430", timeVisible: true, secondsVisible: false },
       crosshair: { vertLine: { color: "#e63946", width: 1 }, horzLine: { color: "#e63946", width: 1 } },
     });
-    const s = c.addCandlestickSeries({
-      upColor: "#00d7bd", downColor: "#e63946", borderUpColor: "#00d7bd", borderDownColor: "#e63946", wickUpColor: "#00d7bd", wickDownColor: "#e63946",
-    });
+    const s = c.addCandlestickSeries({ upColor: "#00d7bd", downColor: "#e63946", borderUpColor: "#00d7bd", borderDownColor: "#e63946", wickUpColor: "#00d7bd", wickDownColor: "#e63946" });
     chart.current = c;
     series.current = s;
     const resize = new ResizeObserver(entries => c.applyOptions({ width: entries[0].contentRect.width }));
@@ -92,7 +91,7 @@ export default function TradingPage() {
 
   async function placeTrade() {
     setMessage("");
-    if (!account) return setMessage("Create or select a trading account before placing a paper trade.");
+    if (!account) return setMessage("You need a funded demo account first. Choose an account size to start trading.");
     const entry = side === "BUY" ? ask : bid;
     const body = { accountId: account.accountId, symbol, side, quantity: Number(quantity), entryPrice: entry, stopLoss: stopLoss ? Number(stopLoss) : undefined, takeProfit: takeProfit ? Number(takeProfit) : undefined };
     const r = await fetch("/api/trades", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -104,9 +103,10 @@ export default function TradingPage() {
 
   return <div className="mx-auto max-w-[1500px] space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-3">
-      <div><h1 className="text-3xl font-semibold">Paper Trading</h1><p className="mt-1 text-sm text-text-secondary">MT5-style execution workspace. Orders are simulated and never sent to a broker.</p></div>
+      <div><h1 className="text-3xl font-semibold">Trading</h1><p className="mt-1 text-sm text-text-secondary">MT5-style paper execution workspace. Orders are simulated and never sent to a broker.</p></div>
       <div className="flex items-center gap-2 rounded-xl border border-cyan/20 bg-cyan/5 px-3 py-2 text-xs font-mono text-cyan"><span className="h-2 w-2 rounded-full bg-cyan animate-pulse"/>PAPER FEED</div>
     </div>
+    {!account && <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-amber/20 bg-amber/5 p-5"><div><div className="font-semibold text-amber">No funded demo account</div><p className="mt-1 text-sm text-text-secondary">Purchase a funded demo account to unlock order placement and receive a simulated account balance.</p></div><Link href="/dashboard/challenges" className="rounded-xl bg-crimson px-5 py-3 text-sm font-semibold text-white">Choose account</Link></div>}
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
       <section className="overflow-hidden rounded-2xl border border-border bg-[#0b080c]">
         <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
@@ -121,12 +121,11 @@ export default function TradingPage() {
           <div className="flex gap-2"><button onClick={() => setSide("BUY")} className={`flex-1 rounded-xl py-3 font-semibold ${side === "BUY" ? "bg-cyan/15 text-cyan ring-1 ring-cyan/30" : "bg-background text-text-muted"}`}>BUY<br/><span className="font-mono text-xs">{ask.toFixed(5)}</span></button><button onClick={() => setSide("SELL")} className={`flex-1 rounded-xl py-3 font-semibold ${side === "SELL" ? "bg-crimson/15 text-crimson ring-1 ring-crimson/30" : "bg-background text-text-muted"}`}>SELL<br/><span className="font-mono text-xs">{bid.toFixed(5)}</span></button></div>
           <label className="mt-4 block text-xs text-text-muted">Quantity<input value={quantity} onChange={e => setQuantity(e.target.value)} type="number" min="0.01" step="0.01" className="mt-1 w-full rounded-xl border border-border bg-background p-3"/></label>
           <div className="mt-3 grid grid-cols-2 gap-2"><label className="text-xs text-text-muted">Stop loss<input value={stopLoss} onChange={e => setStopLoss(e.target.value)} placeholder="Optional" className="mt-1 w-full rounded-xl border border-border bg-background p-3 font-mono"/></label><label className="text-xs text-text-muted">Take profit<input value={takeProfit} onChange={e => setTakeProfit(e.target.value)} placeholder="Optional" className="mt-1 w-full rounded-xl border border-border bg-background p-3 font-mono"/></label></div>
-          <button onClick={placeTrade} className="mt-4 w-full rounded-xl bg-crimson py-3 font-semibold text-white shadow-glow-crimson">Place paper trade</button>
+          <button onClick={placeTrade} disabled={!account} className="mt-4 w-full rounded-xl bg-crimson py-3 font-semibold text-white shadow-glow-crimson disabled:cursor-not-allowed disabled:opacity-40">{account ? "Place paper trade" : "Funded account required"}</button>
           {risk > 0 && <div className="mt-3 text-xs text-text-muted">Estimated SL exposure: <span className="font-mono text-text-primary">${risk.toFixed(2)}</span></div>}
           {message && <div className="mt-3 rounded-xl border border-border p-3 text-xs text-text-secondary">{message}</div>}
         </section>
-        <section className="rounded-2xl border border-border bg-surface/80 p-5"><div className="flex justify-between"><h2 className="font-medium">Open positions</h2><a href="/dashboard/trades" className="text-xs text-cyan">Manage all</a></div>{trades.length === 0 ? <p className="mt-5 text-sm text-text-muted">No positions opened from this session.</p> : <div className="mt-4 space-y-2">{trades.map(t => <div key={t.id} className="rounded-xl border border-border bg-background/50 p-3"><div className="flex justify-between"><b>{t.symbol}</b><span className={t.side === "BUY" ? "text-cyan" : "text-crimson"}>{t.side}</span></div><div className="mt-1 text-xs text-text-muted">{t.quantity} @ {Number(t.entryPrice).toFixed(5)}</div></div>)}</div>}</section>
-        <section className="rounded-2xl border border-amber/20 bg-amber/5 p-4"><div className="text-xs font-semibold text-amber">PRO READY</div><p className="mt-1 text-xs leading-5 text-text-secondary">Advanced replay, unlimited trade history, multi-account analytics and custom risk templates can be part of the paid plan. Core paper trading stays usable in the free tier.</p></section>
+        <section className="rounded-2xl border border-border bg-surface/80 p-5"><div className="flex justify-between"><h2 className="font-medium">Open positions</h2><Link href="/dashboard/trades" className="text-xs text-cyan">Manage all</Link></div>{trades.length === 0 ? <p className="mt-5 text-sm text-text-muted">No positions opened from this session.</p> : <div className="mt-4 space-y-2">{trades.map(t => <div key={t.id} className="rounded-xl border border-border bg-background/50 p-3"><div className="flex justify-between"><b>{t.symbol}</b><span className={t.side === "BUY" ? "text-cyan" : "text-crimson"}>{t.side}</span></div><div className="mt-1 text-xs text-text-muted">{t.quantity} @ {Number(t.entryPrice).toFixed(5)}</div></div>)}</div>}</section>
       </aside>
     </div>
   </div>;
