@@ -14,6 +14,7 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
+import { LiveMarketChart } from "@/components/dashboard/live-market-chart";
 
 const equitySeries = [
   100000, 100420, 100180, 100760, 101140, 100930, 101520, 101860,
@@ -126,6 +127,8 @@ export default function DashboardPage() {
         <Metric label="Profit Target" value={`${targetProgress.toFixed(1)}%`} sub={`${money(gain)} of ${money(target)} target`} icon={Target} tone="success" />
       </div>
 
+      <LiveMarketChart />
+
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="rounded-2xl border border-border bg-surface/80 p-5 shadow-glass">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -153,7 +156,7 @@ export default function DashboardPage() {
             <button onClick={() => setSide("BUY")} className={`rounded-xl border py-3 text-sm font-semibold transition ${side === "BUY" ? "border-cyan/50 bg-cyan/10 text-cyan" : "border-border text-text-muted"}`}>BUY</button>
             <button onClick={() => setSide("SELL")} className={`rounded-xl border py-3 text-sm font-semibold transition ${side === "SELL" ? "border-crimson/50 bg-crimson/10 text-crimson" : "border-border text-text-muted"}`}>SELL</button>
           </div>
-          <label className="mt-4 block text-xs text-text-muted">Instrument<select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-crimson"><option>EURUSD</option><option>XAUUSD</option><option>NAS100</option></select></label>
+          <label className="mt-4 block text-xs text-text-muted">Instrument<select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-text-primary outline-none focus:border-crimson"><option>EURUSD</option><option>GBPUSD</option><option>USDJPY</option><option>XAUUSD</option><option>NAS100</option></select></label>
           <label className="mt-4 block text-xs text-text-muted">Quantity<input value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="decimal" className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2.5 font-mono text-sm text-text-primary outline-none focus:border-crimson" /></label>
           <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-border bg-background/50 p-3 text-xs"><div><span className="text-text-muted">Bid</span><div className="mt-1 font-mono text-crimson">{quote.bid}</div></div><div><span className="text-text-muted">Ask</span><div className="mt-1 font-mono text-cyan">{quote.ask}</div></div></div>
           <button onClick={submitOrder} className="mt-4 w-full rounded-xl bg-crimson py-3 text-sm font-semibold text-white shadow-glow-crimson transition hover:bg-crimson/90">Place {side} order</button>
@@ -166,7 +169,7 @@ export default function DashboardPage() {
         <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-[10px] font-mono uppercase tracking-widest text-text-muted"><tr><th className="pb-3">Instrument</th><th className="pb-3">Side</th><th className="pb-3">Size</th><th className="pb-3">Entry</th><th className="pb-3">Exit</th><th className="pb-3">Time</th><th className="pb-3 text-right">P&L</th></tr></thead><tbody>{trades.map((trade) => <tr key={`${trade.symbol}-${trade.time}`} className="border-b border-border/60 last:border-0"><td className="py-4 font-medium">{trade.symbol}</td><td className="py-4"><span className={trade.side === "BUY" ? "badge-long" : "badge-short"}>{trade.side === "BUY" ? <ArrowUpRight className="mr-1 inline h-3 w-3" /> : <ArrowDownRight className="mr-1 inline h-3 w-3" />}{trade.side}</span></td><td className="py-4 font-mono text-text-secondary">{trade.size}</td><td className="py-4 font-mono text-text-secondary">{trade.entry}</td><td className="py-4 font-mono text-text-secondary">{trade.exit}</td><td className="py-4 text-text-muted"><Clock3 className="mr-1 inline h-3 w-3" />{trade.time}</td><td className={`py-4 text-right font-mono font-semibold ${trade.pnl >= 0 ? "text-cyan" : "text-crimson"}`}>{trade.pnl >= 0 ? "+" : ""}{money(trade.pnl)}</td></tr>)}</tbody></table></div>
       </section>
 
-      <div className="rounded-xl border border-amber/20 bg-amber/5 px-4 py-3 text-xs text-amber/90"><strong>Demo environment:</strong> this dashboard is Vercel-safe and uses simulated market data. No real trades or broker orders are sent.</div>
+      <div className="rounded-xl border border-amber/20 bg-amber/5 px-4 py-3 text-xs text-amber/90"><strong>Demo environment:</strong> market prices are live via Massive; order execution and account balances remain simulated.</div>
     </div>
   );
 }
