@@ -7,7 +7,6 @@ import {
   type IChartApi,
   type ISeriesApi,
   type LineData,
-  LineSeries,
 } from "lightweight-charts";
 import { useQuery } from "@tanstack/react-query";
 import { useAccountStore } from "@/store/account-store";
@@ -34,7 +33,6 @@ export function EquityChart() {
     refetchInterval: 30_000,
   });
 
-  // Create chart once
   useEffect(() => {
     if (!chartRef.current) return;
 
@@ -52,18 +50,13 @@ export function EquityChart() {
         vertLine: { color: "#E63946", labelBackgroundColor: "#E63946" },
         horzLine: { color: "#E63946", labelBackgroundColor: "#E63946" },
       },
-      rightPriceScale: {
-        borderColor: "#2A2430",
-      },
-      timeScale: {
-        borderColor: "#2A2430",
-        timeVisible: true,
-      },
+      rightPriceScale: { borderColor: "#2A2430" },
+      timeScale: { borderColor: "#2A2430", timeVisible: true },
       width: chartRef.current.clientWidth,
       height: 300,
     });
 
-    const series = chart.addSeries(LineSeries, {
+    const series = chart.addLineSeries({
       color: "#00F5D4",
       lineWidth: 2,
       crosshairMarkerRadius: 5,
@@ -86,10 +79,11 @@ export function EquityChart() {
     return () => {
       ro.disconnect();
       chart.remove();
+      chartApiRef.current = null;
+      seriesRef.current = null;
     };
   }, []);
 
-  // Feed data when query resolves
   useEffect(() => {
     if (!seriesRef.current || !data?.equityCurve?.length) return;
     const lineData: LineData[] = data.equityCurve.map((p) => ({
@@ -110,7 +104,7 @@ export function EquityChart() {
           {accountId ? `Account ${selectedAccount?.accountId}` : "No account selected"}
         </span>
       </div>
-      <div className="chart-container">
+      <div className="chart-container relative">
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-surface/50 z-10">
             <span className="text-xs font-mono text-text-muted animate-pulse">Loading chart...</span>
