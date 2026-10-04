@@ -8,7 +8,7 @@ import { TradeSide, TradeStatus } from "@prisma/client";
 export function OrderTicket() {
   const { selectedAccount } = useAccountStore();
   const queryClient = useQueryClient();
-  const accountId = selectedAccount?.id;
+  const accountId = selectedAccount?.accountId;
   const [symbol, setSymbol] = useState("EURUSD");
   const [side, setSide] = useState<TradeSide>(TradeSide.BUY);
   const [quantity, setQuantity] = useState("1");
@@ -21,6 +21,7 @@ export function OrderTicket() {
   const { data } = useQuery({
     queryKey: ["open-trades", accountId],
     queryFn: async () => {
+      if (!accountId) return null;
       const res = await fetch(`/api/trades?accountId=${accountId}&status=${TradeStatus.OPEN}&pageSize=100`);
       if (!res.ok) throw new Error("Failed to load open trades");
       return res.json() as Promise<{ data: Array<{ id: string; symbol: string; side: TradeSide; quantity: number; entryPrice: number }> }>;

@@ -8,7 +8,7 @@
 import type { PerformanceMetrics, TradePayload, EquityDataPoint } from "@/types";
 import { calcProfitFactor } from "@/lib/utils";
 import { prisma } from "@/lib/prisma";
-import { TradeStatus } from "@prisma/client";
+import { Prisma, TradeStatus } from "@prisma/client";
 
 // ─── Metrics Calculator ───────────────────────────────────────────────────────
 
@@ -30,10 +30,10 @@ export function calculateMetrics(trades: TradePayload[]): PerformanceMetrics {
   // Average R:R from trades that have it set
   const tradesWithRR = closed.filter(
     (t) => t.riskRewardRatio !== undefined
-  ) as (TradePayload & { riskRewardRatio: number })[];
+  );
   const avgRiskReward =
     tradesWithRR.length > 0
-      ? tradesWithRR.reduce((sum, t) => sum + t.riskRewardRatio, 0) /
+      ? tradesWithRR.reduce((sum, t) => sum + (t.riskRewardRatio ?? 0), 0) /
         tradesWithRR.length
       : 0;
 
@@ -126,7 +126,7 @@ export async function getAccountMetrics(
     toDate?: Date;
   }
 ): Promise<PerformanceMetrics> {
-  const where: Parameters<typeof prisma.trade.findMany>[0]["where"] = {
+  const where: Prisma.TradeWhereInput = {
     accountId,
     status: TradeStatus.CLOSED,
     ...(filters?.symbol ? { symbol: filters.symbol } : {}),
@@ -180,6 +180,7 @@ export async function getAccountMetrics(
       ? parseFloat(t.riskRewardRatio.toString())
       : undefined,
     closedAt: t.closedAt ?? undefined,
+    notes: t.notes ?? undefined,
   }));
 
   return calculateMetrics(trades);

@@ -26,35 +26,24 @@ function MetricCard({ title, value, subValue, icon, accentColor, loading }: Metr
   return (
     <div className="metric-card animate-slide-up">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-mono uppercase tracking-widest text-text-muted">
-          {title}
-        </span>
-        <div
-          className={cn(
-            "w-8 h-8 rounded-lg border flex items-center justify-center",
-            colorMap[accentColor]
-          )}
-        >
+        <span className="text-xs font-mono uppercase tracking-widest text-text-muted">{title}</span>
+        <div className={cn("w-8 h-8 rounded-lg border flex items-center justify-center", colorMap[accentColor])}>
           {icon}
         </div>
       </div>
       {loading ? (
         <div className="h-8 w-32 bg-surface-elevated rounded animate-pulse" />
       ) : (
-        <div className={cn("text-2xl font-bold font-mono", `text-${accentColor}`)}>
-          {value}
-        </div>
+        <div className={cn("text-2xl font-bold font-mono", `text-${accentColor}`)}>{value}</div>
       )}
-      {subValue && (
-        <div className="text-xs text-text-muted font-mono">{subValue}</div>
-      )}
+      {subValue && <div className="text-xs text-text-muted font-mono">{subValue}</div>}
     </div>
   );
 }
 
 export function MetricCards() {
   const { selectedAccount } = useAccountStore();
-  const accountId = selectedAccount?.id;
+  const accountId = selectedAccount?.accountId;
 
   const { data, isLoading } = useQuery({
     queryKey: ["account", accountId],
@@ -66,7 +55,7 @@ export function MetricCards() {
       return json.data;
     },
     enabled: !!accountId,
-    refetchInterval: 5000, // refresh every 5s
+    refetchInterval: 5000,
   });
 
   const equity = data?.equity ?? selectedAccount?.equity ?? 0;
@@ -75,10 +64,10 @@ export function MetricCards() {
   const maxTotalDrawdown = data?.maxTotalDrawdownLimit ?? selectedAccount?.maxTotalDrawdownLimit ?? 0;
   const profitTarget = data?.profitTarget ?? selectedAccount?.profitTarget ?? 1;
 
-  // Daily loss remaining (simplified — real version reads from SOD snapshot)
-  const dailyLossRemaining = maxDailyLoss; // placeholder until WS provides live value
+  const dailyLossRemaining = maxDailyLoss;
   const totalDrawdownRemaining = maxTotalDrawdown - (initialBalance - equity);
   const profitProgress = Math.max(0, equity - initialBalance);
+  const profitTargetProgress = profitTarget > 0 ? (profitProgress / profitTarget) * 100 : 0;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -109,7 +98,7 @@ export function MetricCards() {
       <MetricCard
         title="Profit Target Progress"
         value={formatCurrency(profitProgress)}
-        subValue={`Target: ${formatCurrency(profitTarget)} (${formatPercent((profitProgress / profitTarget) * 100, 1)})`}
+        subValue={`Target: ${formatCurrency(profitTarget)} (${formatPercent(profitTargetProgress, 1)})`}
         icon={<Target className="w-4 h-4" />}
         accentColor="success"
         loading={isLoading}

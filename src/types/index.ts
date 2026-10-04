@@ -50,6 +50,8 @@ export interface TradePayload {
   takeProfit?: number;
   pnl?: number;
   pnlPercent?: number;
+  /** Calculated reward/risk ratio from the trade's stop-loss and take-profit. */
+  riskRewardRatio?: number;
   openedAt: Date;
   closedAt?: Date;
   tags: string[];
@@ -76,7 +78,7 @@ export interface RiskCheckResult {
   message?: string;
 }
 
-// ─── WebSocket Message Types ──────────────────────────────────────────────────
+// ─── WebSocket Message Types ─────────────────────────────────────────────────
 
 export type WsMessageType =
   | "EQUITY_UPDATE"
@@ -113,7 +115,7 @@ export interface TickPayload {
   timestamp: number;
 }
 
-// ─── Performance Metrics ──────────────────────────────────────────────────────
+// ─── Performance Metrics ─────────────────────────────────────────────────────
 
 export interface PerformanceMetrics {
   totalTrades: number;
