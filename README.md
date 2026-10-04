@@ -34,8 +34,6 @@ NgFunded market-data fanout
                          paper account
 ```
 
-The MT5 Python integration officially supports connecting to a running MT5 terminal and retrieving the latest tick (`symbol_info_tick`) as well as historical tick data (`copy_ticks_from`). citeturn0search1turn0search0
-
 ### Project structure
 
 ```text
@@ -87,8 +85,6 @@ npm run dev
 
 ### MT5 market-data bridge
 
-The official MetaTrader 5 Python package can be installed with `pip install MetaTrader5`. citeturn0search3
-
 ```bash
 python -m pip install -r requirements-mt5.txt
 python src/server/mt5-bridge.py
@@ -106,8 +102,6 @@ MT5_LOGIN=""
 MT5_PASSWORD=""
 MT5_SERVER=""
 ```
-
-`MT5_TERMINAL_PATH`, login, password and server are optional when the MT5 terminal can be discovered automatically. The official `initialize()` API supports both automatic discovery and explicit terminal/account parameters. citeturn0search2
 
 ### Start the WebSocket fanout
 
