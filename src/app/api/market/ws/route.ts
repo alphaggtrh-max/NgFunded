@@ -8,8 +8,30 @@ export const maxDuration = 1800;
 const SYMBOLS = new Set(["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD"]);
 type ClientSocket = import("@vercel/functions").WebSocket;
 type ClientMessage = { type?: string; symbol?: string };
-type UpstreamEvent = { ev?: string; status?: string; message?: string; p?: string; pair?: string; a?: number; b?: number; t?: number; o?: number; h?: number; l?: number; c?: number; v?: number; s?: number };
-type Upstream = { symbol: string; socket: WebSocket | null; clients: Set<ClientSocket>; reconnectTimer?: ReturnType<typeof setTimeout>; reconnectDelay: number; closed: boolean };
+type UpstreamEvent = {
+  ev?: string;
+  status?: string;
+  message?: string;
+  p?: string;
+  pair?: string;
+  a?: number;
+  b?: number;
+  t?: number;
+  o?: number;
+  h?: number;
+  l?: number;
+  c?: number;
+  v?: number;
+  s?: number;
+};
+type Upstream = {
+  symbol: string;
+  socket: WebSocket | null;
+  clients: Set<ClientSocket>;
+  reconnectTimer?: ReturnType<typeof setTimeout>;
+  reconnectDelay: number;
+  closed: boolean;
+};
 
 const streams = new Map<string, Upstream>();
 
@@ -38,6 +60,8 @@ function connectUpstream(stream: Upstream) {
     return;
   }
 
+  // Massive's real-time Forex cluster. Authentication must complete before
+  // subscriptions are sent; otherwise Massive closes the connection.
   const socket = new WebSocket("wss://socket.massive.com/forex");
   stream.socket = socket;
 
@@ -52,17 +76,32 @@ function connectUpstream(stream: Upstream) {
       for (const event of events) {
         if (event.ev === "status") {
           if (event.status === "auth_success") {
-            socket.send(JSON.stringify({ action: "subscribe", params: `C.${pair(stream.symbol)},CA.${pair(stream.symbol)}` }));
+            socket.send(JSON.stringify({
+              action: "subscribe",
+              params: `C.${pair(stream.symbol)},CA.${pair(stream.symbol)}`,
+            }));
+          }
+          if (event.status === "error" || event.status === "auth_failed" || event.status === "max_connections") {
+            broadcast(stream, { type: "error", symbol: stream.symbol, message: event.message ?? event.status });
           }
           continue;
         }
+
         if (event.ev === "C" && event.b != null && event.a != null) {
           const quote = { bid: event.b, ask: event.a, timestamp: event.t ?? Date.now() };
           broadcast(stream, { type: "quote", symbol: stream.symbol, ...quote });
           void cacheMarketQuote(stream.symbol, quote);
         }
+
         if (event.ev === "CA" && event.o != null && event.h != null && event.l != null && event.c != null && event.s != null) {
-          const bar = { time: Math.floor(event.s / 1000), open: event.o, high: event.h, low: event.l, close: event.c, volume: event.v ?? 0 };
+          const bar = {
+            time: Math.floor(event.s / 1000),
+            open: event.o,
+            high: event.h,
+            low: event.l,
+            close: event.c,
+            volume: event.v ?? 0,
+          };
           broadcast(stream, { type: "bar", symbol: stream.symbol, bar });
           void cacheMarketBar(stream.symbol, bar);
         }
@@ -83,19 +122,26 @@ function connectUpstream(stream: Upstream) {
       streams.delete(stream.symbol);
       return;
     }
+
     broadcast(stream, { type: "reconnecting", symbol: stream.symbol });
     stream.reconnectTimer = setTimeout(() => {
       stream.reconnectTimer = undefined;
       connectUpstream(stream);
     }, stream.reconnectDelay);
-    stream.reconnectDelay = Math.min(stream.reconnectDelay * 2, 15000);
+    stream.reconnectDelay = Math.min(stream.reconnectDelay * 2, 30000);
   });
 }
 
 function getStream(symbol: string) {
   const existing = streams.get(symbol);
   if (existing) return existing;
-  const stream: Upstream = { symbol, socket: null, clients: new Set(), reconnectDelay: 1000, closed: false };
+  const stream: Upstream = {
+    symbol,
+    socket: null,
+    clients: new Set(),
+    reconnectDelay: 1000,
+    closed: false,
+  };
   streams.set(symbol, stream);
   connectUpstream(stream);
   return stream;
@@ -104,9 +150,14 @@ function getStream(symbol: string) {
 function detach(stream: Upstream, client: ClientSocket) {
   stream.clients.delete(client);
   if (stream.clients.size > 0) return;
+
   stream.closed = true;
   if (stream.reconnectTimer) clearTimeout(stream.reconnectTimer);
-  try { stream.socket?.close(); } catch { /* cleanup race */ }
+  try {
+    stream.socket?.close();
+  } catch {
+    // Cleanup race; the socket may already be closed.
+  }
   stream.socket = null;
   streams.delete(stream.symbol);
 }
