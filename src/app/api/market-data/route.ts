@@ -9,6 +9,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(errorResponse("Unauthorized", 401), { status: 401 });
   }
 
+  if (!redis) {
+    return NextResponse.json(errorResponse("Realtime market data is not configured", 503, "REDIS_NOT_CONFIGURED"), { status: 503 });
+  }
+
   const { searchParams } = new URL(req.url);
   const requestedSymbol = searchParams.get("symbol")?.trim().toUpperCase();
   const symbols = requestedSymbol
@@ -16,7 +20,7 @@ export async function GET(req: NextRequest) {
     : (await redis.smembers(CacheKeys.marketSymbols())).sort();
 
   const quotes = await Promise.all(
-    symbols.map(async (symbol) => {
+    symbols.map(async symbol => {
       const raw = await redis.get(CacheKeys.marketTick(symbol));
       return raw ? JSON.parse(raw) : null;
     })
@@ -27,7 +31,7 @@ export async function GET(req: NextRequest) {
   const connected = lastTickAt !== null && Date.now() - lastTickAt < 10_000;
 
   return NextResponse.json(successResponse({
-    provider: process.env.MARKET_DATA_PROVIDER ?? "mt5",
+    provider: process.env.MARKET_DATA_PROVIDER ?? "massive",
     connected,
     lastTickAt,
     symbols: quotes.filter(Boolean),
