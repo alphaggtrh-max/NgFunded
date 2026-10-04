@@ -23,25 +23,23 @@ if (process.env.NODE_ENV !== "production") {
   globalForRedis.redis = redis;
 }
 
-// ─── Cache key helpers ────────────────────────────────────────────────────────
-
 export const CacheKeys = {
-  /** Current equity for an account (refreshed on every tick) */
   accountEquity: (accountId: string) => `ngf:equity:${accountId}`,
-  /** Start-of-day equity for daily drawdown calculation */
   sodEquity: (accountId: string) => `ngf:sod_equity:${accountId}`,
-  /** Account status cache (ACTIVE | BREACHED | PASSED) */
   accountStatus: (accountId: string) => `ngf:status:${accountId}`,
-  /** Live open P&L across all positions for an account */
   openPnl: (accountId: string) => `ngf:open_pnl:${accountId}`,
-  /** Pub/Sub channel for live equity updates */
   equityChannel: (accountId: string) => `ngf:channel:equity:${accountId}`,
-  /** Rate-limit key for risk check calls */
   rateLimit: (accountId: string) => `ngf:rl:${accountId}`,
+  marketTick: (symbol: string) => `ngf:market:tick:${symbol.toUpperCase()}`,
+  marketSymbols: () => "ngf:market:symbols",
+  marketHeartbeat: () => "ngf:market:heartbeat",
+  marketTickChannel: () => "ngf:market:tick",
 } as const;
 
 export const CACHE_TTL = {
-  EQUITY: 300,      // 5 minutes — refreshed on ticks
-  SOD_EQUITY: 86400, // 24 hours
-  STATUS: 60,       // 1 minute
+  EQUITY: 300,
+  SOD_EQUITY: 86400,
+  STATUS: 60,
+  MARKET_TICK: 10,
+  MARKET_HEARTBEAT: 10,
 } as const;
