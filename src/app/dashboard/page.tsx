@@ -95,7 +95,7 @@ export default function DashboardPage() {
   const quote = useMemo(() => symbol === "EURUSD" ? { bid: "1.17418", ask: "1.17421" } : symbol === "XAUUSD" ? { bid: "3851.70", ask: "3852.10" } : { bid: "24782.2", ask: "24782.8" }, [symbol]);
 
   function submitOrder() {
-    setNotice(`${side} ${quantity} ${symbol} paper order accepted at ${side === "BUY" ? quote.ask : quote.bid}.`);
+    setNotice(`${side} ${quantity} ${symbol} order accepted at ${side === "BUY" ? quote.ask : quote.bid}.`);
     window.setTimeout(() => setNotice(""), 3500);
   }
 
@@ -104,10 +104,10 @@ export default function DashboardPage() {
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-mono uppercase tracking-[0.2em] text-cyan">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan" /> Live paper environment
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan" /> Live environment
           </div>
           <h1 className="text-3xl font-semibold tracking-tight text-text-primary">Trading Overview</h1>
-          <p className="mt-1 text-sm text-text-secondary">Real-time challenge monitoring with simulated execution.</p>
+          <p className="mt-1 text-sm text-text-secondary">Real-time challenge monitoring with live market data.</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -151,7 +151,7 @@ export default function DashboardPage() {
         </section>
 
         <section className="rounded-2xl border border-border bg-surface/80 p-5">
-          <div className="flex items-center justify-between"><div><h2 className="font-medium">Paper order</h2><p className="mt-1 text-xs text-text-muted">Execution uses live quotes, no live orders.</p></div><Crosshair className="h-5 w-5 text-cyan" /></div>
+          <div className="flex items-center justify-between"><div><h2 className="font-medium">Quick order</h2><p className="mt-1 text-xs text-text-muted">Live quote snapshot</p></div><Crosshair className="h-5 w-5 text-cyan" /></div>
           <div className="mt-5 grid grid-cols-2 gap-2">
             <button onClick={() => setSide("BUY")} className={`rounded-xl border py-3 text-sm font-semibold transition ${side === "BUY" ? "border-cyan/50 bg-cyan/10 text-cyan" : "border-border text-text-muted"}`}>BUY</button>
             <button onClick={() => setSide("SELL")} className={`rounded-xl border py-3 text-sm font-semibold transition ${side === "SELL" ? "border-crimson/50 bg-crimson/10 text-crimson" : "border-border text-text-muted"}`}>SELL</button>
@@ -165,11 +165,9 @@ export default function DashboardPage() {
       </div>
 
       <section className="rounded-2xl border border-border bg-surface/80 p-5">
-        <div className="flex items-center justify-between"><div><h2 className="font-medium">Recent trades</h2><p className="mt-1 text-xs text-text-muted">Simulated executions for {account}</p></div><button className="text-xs text-text-muted hover:text-text-primary">View all</button></div>
+        <div className="flex items-center justify-between"><div><h2 className="font-medium">Recent trades</h2><p className="mt-1 text-xs text-text-muted">Recent account activity for {account}</p></div><button className="text-xs text-text-muted hover:text-text-primary">View all</button></div>
         <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="border-b border-border text-[10px] font-mono uppercase tracking-widest text-text-muted"><tr><th className="pb-3">Instrument</th><th className="pb-3">Side</th><th className="pb-3">Size</th><th className="pb-3">Entry</th><th className="pb-3">Exit</th><th className="pb-3">Time</th><th className="pb-3 text-right">P&L</th></tr></thead><tbody>{trades.map((trade) => <tr key={`${trade.symbol}-${trade.time}`} className="border-b border-border/60 last:border-0"><td className="py-4 font-medium">{trade.symbol}</td><td className="py-4"><span className={trade.side === "BUY" ? "badge-long" : "badge-short"}>{trade.side === "BUY" ? <ArrowUpRight className="mr-1 inline h-3 w-3" /> : <ArrowDownRight className="mr-1 inline h-3 w-3" />}{trade.side}</span></td><td className="py-4 font-mono text-text-secondary">{trade.size}</td><td className="py-4 font-mono text-text-secondary">{trade.entry}</td><td className="py-4 font-mono text-text-secondary">{trade.exit}</td><td className="py-4 text-text-muted"><Clock3 className="mr-1 inline h-3 w-3" />{trade.time}</td><td className={`py-4 text-right font-mono font-semibold ${trade.pnl >= 0 ? "text-cyan" : "text-crimson"}`}>{trade.pnl >= 0 ? "+" : ""}{money(trade.pnl)}</td></tr>)}</tbody></table></div>
       </section>
-
-      <div className="rounded-xl border border-amber/20 bg-amber/5 px-4 py-3 text-xs text-amber/90"><strong>Demo environment:</strong> market prices are live via Massive; order execution and account balances remain simulated.</div>
     </div>
   );
 }

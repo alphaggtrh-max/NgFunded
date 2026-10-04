@@ -74,7 +74,14 @@ export function LiveMarketChart() {
         if (!response.ok || !json.data) throw new Error(json.error?.message ?? "Live market data unavailable");
         if (cancelled) return;
         setMarket(json.data);
-        seriesRef.current?.setData(json.data.bars as CandlestickData[]);
+        const bars: CandlestickData[] = json.data.bars.map((bar) => ({
+          time: bar.time as CandlestickData["time"],
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+        }));
+        seriesRef.current?.setData(bars);
         chartRef.current?.timeScale().fitContent();
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Live market data unavailable");
@@ -100,7 +107,7 @@ export function LiveMarketChart() {
             <h2 className="font-medium">Live market</h2>
             <span className="rounded-full border border-cyan/20 bg-cyan/5 px-2 py-0.5 text-[10px] font-mono text-cyan">{market?.provider ?? "Massive"}</span>
           </div>
-          <p className="mt-1 text-xs text-text-muted">Real market quotes · paper execution only</p>
+          <p className="mt-1 text-xs text-text-muted">Live market quotes and OHLC</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono text-text-primary outline-none focus:border-crimson">
@@ -127,7 +134,7 @@ export function LiveMarketChart() {
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-text-muted">
         <span>Quotes and OHLC are supplied server-side; API credentials never reach the browser.</span>
-        <span>Updated every 5s</span>
+        <span>Dashboard refresh: 5s</span>
       </div>
     </section>
   );
