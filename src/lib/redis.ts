@@ -1,11 +1,15 @@
 import Redis from "ioredis";
 
-const globalForRedis = globalThis as unknown as {
-  redis: Redis | undefined;
-};
-
+const globalForRedis = globalThis as unknown as { redis: Redis | undefined };
 const redisUrl = process.env.ngfunded_REDIS_URL ?? process.env.REDIS_URL;
 const KEY_PREFIX = "ngfunded:";
+
+export const CACHE_TTL = {
+  EQUITY: 30,
+  SOD_EQUITY: 86400,
+  STATUS: 60,
+  OPEN_PNL: 30,
+} as const;
 
 export const CacheKeys = {
   marketQuote: (symbol: string) => `${KEY_PREFIX}market:quote:${symbol.toUpperCase()}`,
@@ -13,14 +17,16 @@ export const CacheKeys = {
   marketTick: (symbol: string) => `${KEY_PREFIX}market:quote:${symbol.toUpperCase()}`,
   marketSymbols: () => `${KEY_PREFIX}market:symbols`,
   marketHeartbeat: () => `${KEY_PREFIX}market:heartbeat`,
+  accountEquity: (accountId: string) => `${KEY_PREFIX}account:${accountId}:equity`,
+  accountStatus: (accountId: string) => `${KEY_PREFIX}account:${accountId}:status`,
+  sodEquity: (accountId: string) => `${KEY_PREFIX}account:${accountId}:sod-equity`,
+  openPnl: (accountId: string) => `${KEY_PREFIX}account:${accountId}:open-pnl`,
+  equityChannel: (accountId: string) => `${KEY_PREFIX}account:${accountId}:equity-events`,
 };
 
 /**
  * Redis is the realtime/cache layer. PostgreSQL remains the durable source of
  * truth for users, funded accounts, trades, payouts and audit history.
- *
- * Vercel's Redis integration is connected to this project through
- * ngfunded_REDIS_URL. REDIS_URL remains supported for local development.
  */
 export const redis = redisUrl
   ? globalForRedis.redis ?? new Redis(redisUrl, {
@@ -30,14 +36,9 @@ export const redis = redisUrl
     })
   : null;
 
-if (redis && process.env.NODE_ENV !== "production") {
-  globalForRedis.redis = redis;
-}
+if (redis && process.env.NODE_ENV !== "production") globalForRedis.redis = redis;
 
-export async function cacheMarketQuote(
-  symbol: string,
-  quote: { bid: number; ask: number; timestamp: number },
-) {
+export async function cacheMarketQuote(symbol: string, quote: { bid: number; ask: number; timestamp: number }) {
   if (!redis) return;
   try {
     const normalized = symbol.toUpperCase();
