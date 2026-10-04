@@ -1,5 +1,6 @@
 import { experimental_upgradeWebSocket, type WebSocketData } from "@vercel/functions";
 import WebSocket from "ws";
+import { cacheMarketBar, cacheMarketQuote } from "@/lib/redis";
 
 export const runtime = "nodejs";
 export const maxDuration = 1800;
@@ -56,14 +57,14 @@ function connectUpstream(stream: Upstream) {
           continue;
         }
         if (event.ev === "C" && event.b != null && event.a != null) {
-          broadcast(stream, { type: "quote", symbol: stream.symbol, bid: event.b, ask: event.a, timestamp: event.t ?? Date.now() });
+          const quote = { bid: event.b, ask: event.a, timestamp: event.t ?? Date.now() };
+          broadcast(stream, { type: "quote", symbol: stream.symbol, ...quote });
+          void cacheMarketQuote(stream.symbol, quote);
         }
         if (event.ev === "CA" && event.o != null && event.h != null && event.l != null && event.c != null && event.s != null) {
-          broadcast(stream, {
-            type: "bar",
-            symbol: stream.symbol,
-            bar: { time: Math.floor(event.s / 1000), open: event.o, high: event.h, low: event.l, close: event.c, volume: event.v ?? 0 },
-          });
+          const bar = { time: Math.floor(event.s / 1000), open: event.o, high: event.h, low: event.l, close: event.c, volume: event.v ?? 0 };
+          broadcast(stream, { type: "bar", symbol: stream.symbol, bar });
+          void cacheMarketBar(stream.symbol, bar);
         }
       }
     } catch (error) {
