@@ -1,13 +1,20 @@
 /**
  * NGFunded real-time risk engine.
- * The important distinction is balance vs equity: open positions can breach
- * a rule before they are closed, so every market-price update must be checked.
+ * Open positions are marked to market from the MT5 paper-market data feed.
  */
 
 import { prisma } from "@/lib/prisma";
 import { redis, CacheKeys, CACHE_TTL } from "@/lib/redis";
 import { AccountStatus, BreachType, TradeSide, TradeStatus } from "@prisma/client";
 import type { RiskCheckInput, RiskCheckResult } from "@/types";
+
+export interface MarketQuote {
+  symbol: string;
+  bid: number;
+  ask: number;
+  last: number;
+  timestamp: number;
+}
 
 export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   if (input.currentStatus === AccountStatus.BREACHED) return { breached: false };
@@ -75,11 +82,6 @@ async function ensureSodEquity(accountId: string, fallbackEquity: number): Promi
   return sod;
 }
 
-/**
- * Central risk check. This is safe to call for every quote/tick.
- * A breach transition is conditional on status=ACTIVE, preventing duplicate
- * breach logs when multiple ticks arrive at the same time.
- */
 export async function runRiskCheck(
   accountId: string,
   currentEquity: number,
@@ -160,12 +162,6 @@ export async function runRiskCheck(
   return result;
 }
 
-/**
- * Mark-to-market an account from broker/TradingView prices and immediately run
- * the risk engine. Prices not supplied for another open symbol retain its
- * entry price, so that position contributes zero unrealised P&L rather than a
- * fabricated price.
- */
 export async function markAccountEquity(
   accountId: string,
   prices: Record<string, number>,
@@ -193,6 +189,44 @@ export async function markAccountEquity(
   }
 
   return runRiskCheck(accountId, equity, offendingTradeId);
+}
+
+/** Mark an account using the correct executable side of an MT5 quote. */
+export async function markAccountEquityFromQuotes(
+  accountId: string,
+  quotes: Record<string, MarketQuote>,
+): Promise<RiskCheckResult> {
+  const account = await prisma.tradingAccount.findUnique({
+    where: { id: accountId },
+    select: { currentBalance: true },
+  });
+  if (!account) return { breached: false };
+
+  const openTrades = await prisma.trade.findMany({
+    where: { accountId, status: TradeStatus.OPEN },
+    select: { id: true, symbol: true, side: true, quantity: true, entryPrice: true },
+  });
+
+  let equity = Number(account.currentBalance);
+  let openPnl = 0;
+
+  for (const trade of openTrades) {
+    const entry = Number(trade.entryPrice);
+    const quote = quotes[trade.symbol.toUpperCase()];
+    if (!quote) continue;
+
+    // Longs close against bid; shorts close against ask.
+    const mark = trade.side === TradeSide.BUY ? quote.bid : quote.ask;
+    const pnl = trade.side === TradeSide.BUY
+      ? (mark - entry) * Number(trade.quantity)
+      : (entry - mark) * Number(trade.quantity);
+
+    openPnl += pnl;
+    equity += pnl;
+  }
+
+  await redis.setex(CacheKeys.openPnl(accountId), CACHE_TTL.EQUITY, openPnl.toString());
+  return runRiskCheck(accountId, equity);
 }
 
 export async function resetDailySodEquity(): Promise<void> {
