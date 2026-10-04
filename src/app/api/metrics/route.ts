@@ -82,6 +82,7 @@ export async function GET(req: NextRequest) {
       ? parseFloat(t.riskRewardRatio.toString())
       : undefined,
     closedAt: t.closedAt ?? undefined,
+    notes: t.notes ?? undefined,
   }));
 
   const equityCurve = buildEquityCurve(
