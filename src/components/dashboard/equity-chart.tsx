@@ -18,7 +18,7 @@ export function EquityChart() {
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const { selectedAccount } = useAccountStore();
-  const accountId = selectedAccount?.id;
+  const accountId = selectedAccount?.accountId;
 
   const { data, isLoading } = useQuery({
     queryKey: ["metrics", accountId],
