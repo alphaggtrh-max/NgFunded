@@ -16,6 +16,13 @@ export interface MarketQuote {
   timestamp: number;
 }
 
+function getRedis() {
+  if (!redis) {
+    throw new Error("Redis is not configured. Set ngfunded_REDIS_URL or REDIS_URL.");
+  }
+  return redis;
+}
+
 export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   if (input.currentStatus === AccountStatus.BREACHED) return { breached: false };
 
@@ -45,21 +52,21 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
 }
 
 export async function getEquityFromCache(accountId: string): Promise<number | null> {
-  const cached = await redis.get(CacheKeys.accountEquity(accountId));
+  const cached = await getRedis().get(CacheKeys.accountEquity(accountId));
   return cached === null ? null : Number(cached);
 }
 
 export async function setEquityInCache(accountId: string, equity: number): Promise<void> {
-  await redis.setex(CacheKeys.accountEquity(accountId), CACHE_TTL.EQUITY, equity.toString());
+  await getRedis().setex(CacheKeys.accountEquity(accountId), CACHE_TTL.EQUITY, equity.toString());
 }
 
 export async function getSodEquity(accountId: string): Promise<number | null> {
-  const cached = await redis.get(CacheKeys.sodEquity(accountId));
+  const cached = await getRedis().get(CacheKeys.sodEquity(accountId));
   return cached === null ? null : Number(cached);
 }
 
 export async function setSodEquity(accountId: string, equity: number): Promise<void> {
-  await redis.setex(CacheKeys.sodEquity(accountId), CACHE_TTL.SOD_EQUITY, equity.toString());
+  await getRedis().setex(CacheKeys.sodEquity(accountId), CACHE_TTL.SOD_EQUITY, equity.toString());
 }
 
 function utcToday(): Date {
@@ -118,7 +125,7 @@ export async function runRiskCheck(
       where: { id: accountId, status: AccountStatus.ACTIVE },
       data: { equity: currentEquity },
     });
-    await redis.publish(CacheKeys.equityChannel(accountId), JSON.stringify({
+    await getRedis().publish(CacheKeys.equityChannel(accountId), JSON.stringify({
       type: "EQUITY_UPDATE",
       accountId,
       payload: { equity: currentEquity },
@@ -150,9 +157,9 @@ export async function runRiskCheck(
 
   if (!transitioned) return { breached: false };
 
-  await redis.setex(CacheKeys.accountStatus(accountId), CACHE_TTL.STATUS, AccountStatus.BREACHED);
+  await getRedis().setex(CacheKeys.accountStatus(accountId), CACHE_TTL.STATUS, AccountStatus.BREACHED);
   await setEquityInCache(accountId, currentEquity);
-  await redis.publish(CacheKeys.equityChannel(accountId), JSON.stringify({
+  await getRedis().publish(CacheKeys.equityChannel(accountId), JSON.stringify({
     type: "ACCOUNT_BREACHED",
     accountId,
     payload: result,
@@ -225,7 +232,7 @@ export async function markAccountEquityFromQuotes(
     equity += pnl;
   }
 
-  await redis.setex(CacheKeys.openPnl(accountId), CACHE_TTL.EQUITY, openPnl.toString());
+  await getRedis().setex(CacheKeys.openPnl(accountId), CACHE_TTL.EQUITY, openPnl.toString());
   return runRiskCheck(accountId, equity);
 }
 
